@@ -1,0 +1,145 @@
+---
+title: "Rapport de projet SY19"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+Nous avons choisi de travailler sur un jeu de données que nous avons trouvé sur Kaggle :  
+https://www.kaggle.com/datasets/vicsuperman/prediction-of-music-genre  
+
+Le jeu de données est constitué de 50 000 lignes et 18 colonnes. Il a été créé à partir de musiques disponibles sur Spotify.
+
+Notre objectif sera de prédire à quel genre musical appartient une musique à partir de ses autres caractéristiques. Il s'agit donc d'une tâche de classification à 10 classes :  
+- Electronic  
+- Anime  
+- Jazz  
+- Alternative  
+- Country  
+- Rap  
+- Blues  
+- Rock  
+- Classical  
+- Hip-Hop  
+
+
+## 1. Chargement des librairies
+
+```{r}
+library(MASS)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(nnet)
+library(class)
+library(corrplot)
+library(ggplot2)
+```
+
+## 2. Nettoyage des données
+
+```{r}
+df <- read.csv("music_genre.csv", stringsAsFactors = FALSE)
+
+# On regarde si les types de données et les valeurs sont cohérentes
+str(df)
+
+# On supprime les colonnes inutiles pour la prédiction du genre musical (ID, nom, date)
+cols_to_drop <- c("instance_id", "artist_name", "track_name", "obtained_date")
+df <- df[, !(names(df) %in% cols_to_drop)]
+
+# Dans la colonne tempo il y a des "?", on les remplace par des NA et on redonne le bon type à cette colonne
+df$tempo[df$tempo == "?"] <- NA
+df$tempo <- as.numeric(df$tempo)
+# On remplace les NA par la médiane
+df$tempo[is.na(df$tempo)] <- median(df$tempo, na.rm = TRUE)
+
+# Dans la colonne duration_ms il y a des -1, on les remplace par la médiane
+median_duration <- median(df$duration_ms[df$duration_ms != -1])
+df$duration_ms[df$duration_ms == -1] <- median_duration
+
+# On retire les lignes vides
+df <- na.omit(df)
+
+# On convertit les variables catégorielles en facteurs
+df$key <- as.factor(df$key)
+df$mode <- as.factor(df$mode)
+df$music_genre <- as.factor(df$music_genre)
+
+# On vérifie la distribution des données
+summary(df)
+```
+
+## 3. Analyse descriptive
+
+```{r}
+# On regarde la distribution des classes pour s'assurer qu'il n' y a pas de déséquilibres à gérer
+barplot(table(df$music_genre), main="Répartition des genres musicaux", col="lightblue", las=2)
+
+# On regarde s'il existe des corrélations entre les variables
+nums <- sapply(df, is.numeric)
+cor_mat <- cor(df[, nums])
+heatmap(cor_mat, main="Matrice de corrélation")
+
+# On étudie la relation entre certaines variables (ici la popularité) et le genre musical
+boxplot(popularity ~ music_genre, data=df, main="Popularité par genre", las=2, col="orange")
+```
+
+## 4. Division du jeu de données
+
+```{r}
+# On divise par tirage aléatoire notre jeu de données (70% pour l'apprentissage / 30% pour le test)
+set.seed(1)
+n <- nrow(df)
+train_ind <- sample(1:n, 0.7 * n)
+
+train_set <- df[train_ind, ]
+test_set  <- df[-train_ind, ]
+
+print(paste("Taille de l'ensemble d'apprentissage :", nrow(train_set)))
+print(paste("Taille de l'ensmble de test :", nrow(test_set)))
+```
+
+## 5. Entrainement de plusieurs modèles
+
+```{r}
+# Arbre de décision
+tree_model <- rpart(music_genre ~ ., data = train_set, method = "class")
+rpart.plot(tree_model, type = 4, extra = 104, main="Arbre de décision")
+pred_tree <- predict(tree_model, test_set, type = "class")
+acc_tree <- mean(pred_tree == test_set$music_genre)
+print(paste("Précision Arbre de décision :", round(acc_tree, 4)))
+
+# LDA
+lda_model <- lda(music_genre ~ ., data = train_set)
+pred_lda <- predict(lda_model, test_set)$class
+acc_lda <- mean(pred_lda == test_set$music_genre)
+print(paste("Précision LDA :", round(acc_lda, 4)))
+
+# Random forest
+rf_model <- randomForest(music_genre ~ ., data = train_set, ntree = 500, importance = TRUE)
+pred_rf <- predict(rf_model, test_set)
+acc_rf <- mean(pred_rf == test_set$music_genre)
+print(paste("Précision Random forest :", round(acc_rf, 4)))
+varImpPlot(rf_model, main="Importance des variables")
+
+# Régression logistique
+multinom_model <- multinom(music_genre ~ ., data = train_set, maxit = 200, trace=FALSE)
+pred_multi <- predict(multinom_model, test_set)
+acc_multi <- mean(pred_multi == test_set$music_genre)
+print(paste("Précision Régression logistique :", round(acc_multi, 4)))
+```
+
+## 6. Comparaison des résultats
+
+```{r}
+resultats <- data.frame(
+  Modele = c("Arbre de décision", "LDA", "Random Forest", "Regression Logistique"),
+  Precision = c(acc_tree, acc_lda, acc_rf, acc_multi)
+)
+print(resultats)
+
+# On affiche la matrice de confusion du meilleur modèle (Random forest)
+print("Matrice de confusion (Random forest):")
+table(Predicted = pred_rf, Actual = test_set$music_genre)
+```
